@@ -39,13 +39,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"gopkg.in/yaml.v2"
+
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -54,8 +57,8 @@ const (
 	CardBase        = 0
 	RenderBase      = 128
 	MaxDevs         = 128
-	SysfsPath       = "sys"
-	DevfsPath       = "dev"
+	SysfsPath       = "/tmp/sys"
+	DevfsPath       = "/tmp/dev"
 	Mib             = 1024.0 * 1024.0
 	DevNullMajor    = 1
 	DevNullMinor    = 3
@@ -81,6 +84,33 @@ type GenOptions struct {
 	dirs  int // int
 	devs  int // int
 	symls int // int
+}
+
+// genOptionsWithTags represents the struct for our YAML data.
+type genOptionsWithTags struct {
+	Capabilities map[string]string `yaml:"Capabilities"`
+	Info         string            `yaml:"Info"`
+	Driver       string            `yaml:"Driver"`
+	DevCount     int               `yaml:"DevCount"`
+	TilesPerDev  int               `yaml:"TilesPerDev"`
+	DevMemSize   int               `yaml:"DevMemSize"`
+	DevsPerNode  int               `yaml:"DevsPerNode"`
+	VfsPerPf     int               `yaml:"VfsPerPf"`
+}
+
+// Function to transform from GenOptionsWithTags to GenOptions.
+func convertToGenOptions(withTags genOptionsWithTags) GenOptions {
+	return GenOptions{
+		Capabilities: withTags.Capabilities,
+		Info:         withTags.Info,
+		Driver:       withTags.Driver,
+		DevCount:     withTags.DevCount,
+		TilesPerDev:  withTags.TilesPerDev,
+		DevMemSize:   withTags.DevMemSize,
+		DevsPerNode:  withTags.DevsPerNode,
+		VfsPerPf:     withTags.VfsPerPf,
+		// Private fields are not copied
+	}
 }
 
 func addSysfsDriTree(root string, opts *GenOptions, i int) error {
@@ -293,7 +323,7 @@ func addDebugfsDriTree(root string, opts *GenOptions, i int) error {
 func removeExistingDir(path, name string) {
 	entries, err := os.ReadDir(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		log.Fatalf("ERROR: ReadDir() failed on fake %s path '%s': %v", name, path, err)
+		klog.Errorf("ReadDir() failed on fake %s path '%s': %v", name, path, err)
 	}
 
 	if len(entries) == 0 {
@@ -301,50 +331,50 @@ func removeExistingDir(path, name string) {
 	}
 
 	if name == "sysfs" && len(entries) > 3 {
-		log.Fatalf("ERROR: >3 entries in '%s' - real sysfs?", path)
+		klog.Errorf(">3 entries in '%s' - real sysfs?", path)
 	}
 
 	if name == "devfs" && (entries[0].Name() != "dri" || len(entries) > 1) {
-		log.Fatalf("ERROR: >1 entries in '%s', or '%s' != 'dri' - real devfs?", path, entries[0].Name())
+		klog.Errorf(">1 entries in '%s', or '%s' != 'dri' - real devfs?", path, entries[0].Name())
 	}
 
-	log.Printf("WARN: removing already existing fake %s path '%s'", name, path)
+	klog.Warningf("Removing already existing fake %s path '%s'", name, path)
 
 	if err = os.RemoveAll(path); err != nil {
-		log.Fatalf("ERROR: removing existing %s in '%s' failed: %v", name, path, err)
+		klog.Errorf("Removing existing %s in '%s' failed: %v", name, path, err)
 	}
 }
 
 func GenerateDriFiles(opts GenOptions) {
 	if opts.Info != "" {
-		log.Printf("Config: '%s'", opts.Info)
+		klog.V(1).Infof("Config: '%s'", opts.Info)
 	}
 
 	removeExistingDir(DevfsPath, "devfs")
 	removeExistingDir(SysfsPath, "sysfs")
-	log.Printf("Generating fake DRI device(s) sysfs, debugfs and devfs content under '%s' & '%s'",
+	klog.V(1).Infof("Generating fake DRI device(s) sysfs, debugfs and devfs content under '%s' & '%s'",
 		SysfsPath, DevfsPath)
 
-	opts.dirs, opts.files = 0, 0
+	opts.dirs, opts.files, opts.devs, opts.symls = 0, 0, 0, 0
 	for i := 0; i < opts.DevCount; i++ {
 		if err := addSysfsBusTree(SysfsPath, &opts, i); err != nil {
-			log.Fatalf("ERROR: dev-%d sysfs bus tree generation failed: %v", i, err)
+			klog.Errorf("Dev-%d sysfs bus tree generation failed: %v", i, err)
 		}
 
 		if err := addSysfsDriTree(SysfsPath, &opts, i); err != nil {
-			log.Fatalf("ERROR: dev-%d sysfs tree generation failed: %v", i, err)
+			klog.Errorf("Dev-%d sysfs tree generation failed: %v", i, err)
 		}
 
 		if err := addDevfsDriTree(DevfsPath, &opts, i); err != nil {
-			log.Fatalf("ERROR: dev-%d devfs tree generation failed: %v", i, err)
+			klog.Errorf("Dev-%d devfs tree generation failed: %v", i, err)
 		}
 
 		if err := addDebugfsDriTree(SysfsPath, &opts, i); err != nil {
-			log.Fatalf("ERROR: dev-%d debugfs tree generation failed: %v", i, err)
+			klog.Errorf("Dev-%d debugfs tree generation failed: %v", i, err)
 		}
 	}
 
-	log.Printf("Done, created %d dirs, %d devices, %d files and %d symlinks.", opts.dirs, opts.devs, opts.files, opts.symls)
+	klog.V(1).Infof("Done, created %d dirs, %d devices, %d files and %d symlinks.", opts.dirs, opts.devs, opts.files, opts.symls)
 
 	makeXelinkSideCar(opts)
 }
@@ -355,13 +385,15 @@ func makeXelinkSideCar(opts GenOptions) {
 	tiles := opts.TilesPerDev
 	connections := opts.Capabilities["connections"]
 
-	if topology != FullyConnected {
+	if topology == FullyConnected {
+		saveSideCarFile(buildConnectionList(gpus, tiles))
+	} else if connections != "" {
 		saveSideCarFile(connections)
 	} else {
-		saveSideCarFile(buildConnectionList(gpus, tiles))
+		return
 	}
 
-	log.Printf("XELINK: generated xelink sidecar label file, using (GPUs: %d, Tiles: %d, Topology: %s)", gpus, tiles, topology)
+	klog.V(1).Infof("XELINK: generated xelink sidecar label file, using (GPUs: %d, Tiles: %d, Topology: %s)", gpus, tiles, topology)
 }
 
 func buildConnectionList(gpus, tiles int) string {
@@ -398,14 +430,18 @@ func buildConnectionList(gpus, tiles int) string {
 }
 
 func saveSideCarFile(connections string) {
-	f, err := os.Create("xpum-sidecar-labels.txt")
+	// Get user-specific temp directory
+	filePath := filepath.Join("/etc/kubernetes/node-feature-discovery/features.d", "xpum-sidecar-labels.txt")
+
+	// Safely create file in the temp directory
+	f, err := os.Create(filePath)
 	if err != nil {
-		panic(err)
+		klog.Errorf("Failed to create file: %v", err)
 	}
 	defer f.Close()
 
 	line := fmt.Sprintf("xpumanager.intel.com/xe-links=%s", connections[:min(len(connections), MaxK8sLabelSize)])
-	fmt.Println(line)
+	klog.V(1).Info(line)
 
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		panic(err)
@@ -415,7 +451,7 @@ func saveSideCarFile(connections string) {
 
 	for i := MaxK8sLabelSize; i < len(connections); i += (MaxK8sLabelSize - 1) {
 		line := fmt.Sprintf("xpumanager.intel.com/xe-links%d=Z%s", index, connections[i:min(len(connections), i+MaxK8sLabelSize-1)])
-		fmt.Println(line)
+		klog.V(1).Info(line)
 
 		if _, err := f.WriteString(line + "\n"); err != nil {
 			panic(err)
@@ -425,48 +461,69 @@ func saveSideCarFile(connections string) {
 	}
 }
 
-func GetOptions(name string) GenOptions {
-	if name == "" {
-		log.Fatal("ERROR: no fake device spec provided")
-	}
-
-	data, err := os.ReadFile(name)
-	if err != nil {
-		log.Fatalf("ERROR: reading JSON spec file '%s' failed: %v", name, err)
-	}
-
-	if Verbose {
-		log.Printf("Using fake device spec: %v\n", string(data))
-	}
-
-	var opts GenOptions
-	if err = json.Unmarshal(data, &opts); err != nil {
-		log.Fatalf("ERROR: Unmarshaling JSON spec file '%s' failed: %v", name, err)
-	}
-
+func MakeOptions(opts GenOptions) GenOptions {
 	if opts.DevCount < 1 || opts.DevCount > MaxDevs {
-		log.Fatalf("ERROR: invalid device count: 1 <= %d <= %d", opts.DevCount, MaxDevs)
+		klog.Errorf("Invalid device count: 1 <= %d <= %d", opts.DevCount, MaxDevs)
 	}
 
 	if opts.VfsPerPf > 0 {
 		if opts.TilesPerDev > 0 || opts.DevsPerNode > 0 {
-			log.Fatalf("ERROR: SR-IOV VFs (%d) with device tiles (%d) or Numa nodes (%d) is unsupported for faking",
+			klog.Errorf("SR-IOV VFs (%d) with device tiles (%d) or Numa nodes (%d) is unsupported for faking",
 				opts.VfsPerPf, opts.TilesPerDev, opts.DevsPerNode)
 		}
 
 		if opts.DevCount%(opts.VfsPerPf+1) != 0 {
-			log.Fatalf("ERROR: %d devices cannot be evenly split to between set of 1 SR-IOV PF + %d VFs",
+			klog.Errorf("%d devices cannot be evenly split to between set of 1 SR-IOV PF + %d VFs",
 				opts.DevCount, opts.VfsPerPf)
 		}
 	}
 
 	if opts.DevsPerNode > opts.DevCount {
-		log.Fatalf("ERROR: DevsPerNode (%d) > DevCount (%d)", opts.DevsPerNode, opts.DevCount)
+		klog.Errorf("DevsPerNode (%d) > DevCount (%d)", opts.DevsPerNode, opts.DevCount)
 	}
 
 	if opts.DevMemSize%Mib != 0 {
-		log.Fatalf("ERROR: Invalid memory size (%f MiB), not even MiB", float64(opts.DevMemSize)/Mib)
+		klog.Errorf("Invalid memory size (%f MiB), not even MiB", float64(opts.DevMemSize)/Mib)
 	}
 
 	return opts
+}
+
+func GetOptions(name string) GenOptions {
+	if name == "" {
+		klog.Errorf("No fake device spec provided")
+	}
+
+	data, err := os.ReadFile(name)
+	if err != nil {
+		klog.Errorf("Reading JSON spec file '%s' failed: %v", name, err)
+	}
+
+	if Verbose {
+		klog.V(1).Infof("Using fake device JSON spec: %v\n", string(data))
+	}
+
+	var opts GenOptions
+	if err = json.Unmarshal(data, &opts); err != nil {
+		klog.Errorf("Unmarshaling JSON spec file '%s' failed: %v", name, err)
+	}
+
+	return MakeOptions(opts)
+}
+
+func GetOptionsBySpec(data string) GenOptions {
+	if data == "" {
+		klog.Errorf("No fake device spec provided")
+	}
+
+	if Verbose {
+		klog.V(1).Infof("Using fake device YAML spec: %v\n", data)
+	}
+
+	var opts genOptionsWithTags
+	if err := yaml.Unmarshal([]byte(data), &opts); err != nil {
+		klog.Errorf("Unmarshaling YAML spec '%s' failed: %v", data, err)
+	}
+
+	return MakeOptions(convertToGenOptions(opts))
 }
