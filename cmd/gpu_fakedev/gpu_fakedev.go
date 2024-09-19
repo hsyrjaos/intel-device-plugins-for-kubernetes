@@ -44,14 +44,11 @@ import (
 
 func main() {
 	name := flag.String("json", "", "JSON spec for fake device sysfs, debugfs and devfs content")
-	verbose := flag.Bool("verbose", false, "More verbose output")
 
 	// Initialize klog flags for verbosity
 	klog.InitFlags(nil)
 
 	flag.Parse()
-
-	fakedri.Verbose = *verbose
 
 	if *name == "" {
 		klog.Error("ERROR: no fake device spec provided")

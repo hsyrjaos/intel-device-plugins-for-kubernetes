@@ -39,12 +39,6 @@ import (
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 )
 
-var (
-	sysfsDrmDirectory = "/sys/class/drm"
-	devfsDriDirectory = "/dev/dri"
-	prefix            = ""
-)
-
 const (
 	nfdFeatureDir    = "/etc/kubernetes/node-feature-discovery/features.d"
 	resourceFilename = "intel-gpu-resources.txt"
@@ -68,6 +62,12 @@ const (
 
 	// Labeler's max update interval, 5min.
 	labelerMaxInterval = 5 * 60 * time.Second
+)
+
+var (
+	sysfsDrmDirectory = "/sys/class/drm"
+	devfsDriDirectory = "/dev/dri"
+	prefix            = ""
 )
 
 type cliOptions struct {

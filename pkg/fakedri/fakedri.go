@@ -52,22 +52,20 @@ import (
 )
 
 const (
-	DirMode         = 0775
-	FileMode        = 0644
-	CardBase        = 0
-	RenderBase      = 128
-	MaxDevs         = 128
-	SysfsPath       = "/tmp/sys"
-	DevfsPath       = "/tmp/dev"
-	Mib             = 1024.0 * 1024.0
-	DevNullMajor    = 1
-	DevNullMinor    = 3
-	DevNullType     = unix.S_IFCHR
-	MaxK8sLabelSize = 63
-	FullyConnected  = "FULL"
+	dirMode         = 0775
+	fileMode        = 0644
+	cardBase        = 0
+	renderBase      = 128
+	maxDevs         = 128
+	sysfsPath       = "/tmp/sys"
+	devfsPath       = "/tmp/dev"
+	mib             = 1024.0 * 1024.0
+	devNullMajor    = 1
+	devNullMinor    = 3
+	devNullType     = unix.S_IFCHR
+	maxK8sLabelSize = 63
+	fullyConnected  = "FULL"
 )
-
-var Verbose bool
 
 type GenOptions struct {
 	Capabilities map[string]string // map (pointer)
@@ -120,10 +118,10 @@ func convertToGenOptions(withTags genOptionsWithTags) GenOptions {
 }
 
 func addSysfsDriTree(root string, opts *GenOptions, i int) error {
-	card := fmt.Sprintf("card%d", CardBase+i)
+	card := fmt.Sprintf("card%d", cardBase+i)
 	base := filepath.Join(root, "class", "drm", card)
 
-	if err := os.MkdirAll(base, DirMode); err != nil {
+	if err := os.MkdirAll(base, dirMode); err != nil {
 		return err
 	}
 
@@ -132,21 +130,21 @@ func addSysfsDriTree(root string, opts *GenOptions, i int) error {
 	data := []byte(strconv.Itoa(opts.DevMemSize))
 	file := filepath.Join(base, "lmem_total_bytes")
 
-	if err := os.WriteFile(file, data, FileMode); err != nil {
+	if err := os.WriteFile(file, data, fileMode); err != nil {
 		return err
 	}
 
 	opts.files++
 
 	path := filepath.Join(base, "device", "drm", card)
-	if err := os.MkdirAll(path, DirMode); err != nil {
+	if err := os.MkdirAll(path, dirMode); err != nil {
 		return err
 	}
 
 	opts.dirs++
 
-	path = filepath.Join(base, "device", "drm", fmt.Sprintf("renderD%d", RenderBase+i))
-	if err := os.Mkdir(path, DirMode); err != nil {
+	path = filepath.Join(base, "device", "drm", fmt.Sprintf("renderD%d", renderBase+i))
+	if err := os.Mkdir(path, dirMode); err != nil {
 		return err
 	}
 
@@ -154,7 +152,7 @@ func addSysfsDriTree(root string, opts *GenOptions, i int) error {
 
 	file = filepath.Join(base, "device", "driver")
 	if err := os.Symlink(fmt.Sprintf("../../../../bus/pci/drivers/%s", opts.Driver), file); err != nil {
-		return fmt.Errorf("symlink creation failed '%s': %w",
+		klog.Fatalf("symlink creation failed '%s': %v",
 			file, err)
 	}
 
@@ -163,7 +161,7 @@ func addSysfsDriTree(root string, opts *GenOptions, i int) error {
 	data = []byte("0x8086")
 	file = filepath.Join(base, "device", "vendor")
 
-	if err := os.WriteFile(file, data, FileMode); err != nil {
+	if err := os.WriteFile(file, data, fileMode); err != nil {
 		return err
 	}
 
@@ -177,7 +175,7 @@ func addSysfsDriTree(root string, opts *GenOptions, i int) error {
 	data = []byte(strconv.Itoa(node))
 	file = filepath.Join(base, "device", "numa_node")
 
-	if err := os.WriteFile(file, data, FileMode); err != nil {
+	if err := os.WriteFile(file, data, fileMode); err != nil {
 		return err
 	}
 
@@ -187,7 +185,7 @@ func addSysfsDriTree(root string, opts *GenOptions, i int) error {
 		data = []byte(strconv.Itoa(opts.VfsPerPf))
 		file = filepath.Join(base, "device", "sriov_numvfs")
 
-		if err := os.WriteFile(file, data, FileMode); err != nil {
+		if err := os.WriteFile(file, data, fileMode); err != nil {
 			return err
 		}
 
@@ -196,7 +194,7 @@ func addSysfsDriTree(root string, opts *GenOptions, i int) error {
 
 	for tile := 0; tile < opts.TilesPerDev; tile++ {
 		path := filepath.Join(base, "gt", fmt.Sprintf("gt%d", tile))
-		if err := os.MkdirAll(path, DirMode); err != nil {
+		if err := os.MkdirAll(path, dirMode); err != nil {
 			return err
 		}
 
@@ -210,7 +208,7 @@ func addSysfsBusTree(root string, opts *GenOptions, i int) error {
 	pciName := fmt.Sprintf("0000:00:0%d.0", i)
 	base := filepath.Join(root, "bus", "pci", "drivers", opts.Driver, pciName)
 
-	if err := os.MkdirAll(base, DirMode); err != nil {
+	if err := os.MkdirAll(base, dirMode); err != nil {
 		return err
 	}
 
@@ -219,14 +217,14 @@ func addSysfsBusTree(root string, opts *GenOptions, i int) error {
 	data := []byte("0x4905")
 	file := filepath.Join(base, "device")
 
-	if err := os.WriteFile(file, data, FileMode); err != nil {
+	if err := os.WriteFile(file, data, fileMode); err != nil {
 		return err
 	}
 
 	opts.files++
 
 	drm := filepath.Join(base, "drm")
-	if err := os.MkdirAll(drm, DirMode); err != nil {
+	if err := os.MkdirAll(drm, dirMode); err != nil {
 		return err
 	}
 
@@ -236,21 +234,21 @@ func addSysfsBusTree(root string, opts *GenOptions, i int) error {
 }
 
 func addDeviceNodes(base string, opts *GenOptions, i int) error {
-	mode := uint32(FileMode | DevNullType)
-	devid := int(unix.Mkdev(uint32(DevNullMajor), uint32(DevNullMinor)))
+	mode := uint32(fileMode | devNullType)
+	devid := int(unix.Mkdev(uint32(devNullMajor), uint32(devNullMinor)))
 
-	file := filepath.Join(base, fmt.Sprintf("card%d", CardBase+i))
+	file := filepath.Join(base, fmt.Sprintf("card%d", cardBase+i))
 	if err := unix.Mknod(file, mode, devid); err != nil {
-		return fmt.Errorf("NULL device (%d:%d) node creation failed for '%s': %w",
-			DevNullMajor, DevNullMinor, file, err)
+		klog.Fatalf("NULL device (%d:%d) node creation failed for '%s': %v",
+			devNullMajor, devNullMinor, file, err)
 	}
 
 	opts.devs++
 
-	file = filepath.Join(base, fmt.Sprintf("renderD%d", RenderBase+i))
+	file = filepath.Join(base, fmt.Sprintf("renderD%d", renderBase+i))
 	if err := unix.Mknod(file, mode, devid); err != nil {
-		return fmt.Errorf("NULL device (%d:%d) node creation failed for '%s': %w",
-			DevNullMajor, DevNullMinor, file, err)
+		klog.Fatalf("NULL device (%d:%d) node creation failed for '%s': %v",
+			devNullMajor, devNullMinor, file, err)
 	}
 
 	opts.devs++
@@ -260,16 +258,16 @@ func addDeviceNodes(base string, opts *GenOptions, i int) error {
 
 func addDeviceSymlinks(base string, opts *GenOptions, i int) error {
 	target := filepath.Join(base, fmt.Sprintf("by-path/pci-0000:%02d:02.0-card", i))
-	if err := os.Symlink(fmt.Sprintf("../card%d", CardBase+i), target); err != nil {
-		return fmt.Errorf("symlink creation failed '%s': %w",
+	if err := os.Symlink(fmt.Sprintf("../card%d", cardBase+i), target); err != nil {
+		klog.Fatalf("symlink creation failed '%s': %v",
 			target, err)
 	}
 
 	opts.symls++
 
 	target = filepath.Join(base, fmt.Sprintf("by-path/pci-0000:%02d:02.0-render", i))
-	if err := os.Symlink(fmt.Sprintf("../renderD%d", RenderBase+i), target); err != nil {
-		return fmt.Errorf("symlink creation failed '%s': %w",
+	if err := os.Symlink(fmt.Sprintf("../renderD%d", renderBase+i), target); err != nil {
+		klog.Fatalf("symlink creation failed '%s': %v",
 			target, err)
 	}
 
@@ -280,11 +278,11 @@ func addDeviceSymlinks(base string, opts *GenOptions, i int) error {
 
 func addDevfsDriTree(root string, opts *GenOptions, i int) error {
 	base := filepath.Join(root, "dri")
-	if err := os.MkdirAll(base, DirMode); err != nil {
+	if err := os.MkdirAll(base, dirMode); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Join(root, "dri/by-path"), DirMode); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "dri/by-path"), dirMode); err != nil {
 		return err
 	}
 
@@ -299,14 +297,14 @@ func addDevfsDriTree(root string, opts *GenOptions, i int) error {
 
 func addDebugfsDriTree(root string, opts *GenOptions, i int) error {
 	base := filepath.Join(root, "kernel", "debug", "dri", strconv.Itoa(i))
-	if err := os.MkdirAll(base, DirMode); err != nil {
+	if err := os.MkdirAll(base, dirMode); err != nil {
 		return err
 	}
 
 	opts.dirs++
 
 	path := filepath.Join(base, "i915_capabilities")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, FileMode)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
 
 	if err != nil {
 		return err
@@ -329,7 +327,7 @@ func addDebugfsDriTree(root string, opts *GenOptions, i int) error {
 func removeExistingDir(path, name string) {
 	entries, err := os.ReadDir(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		klog.Errorf("ReadDir() failed on fake %s path '%s': %v", name, path, err)
+		klog.Fatalf("ReadDir() failed on fake %s path '%s': %v", name, path, err)
 	}
 
 	if len(entries) == 0 {
@@ -337,17 +335,17 @@ func removeExistingDir(path, name string) {
 	}
 
 	if name == "sysfs" && len(entries) > 3 {
-		klog.Errorf(">3 entries in '%s' - real sysfs?", path)
+		klog.Fatalf(">3 entries in '%s' - real sysfs?", path)
 	}
 
 	if name == "devfs" && (entries[0].Name() != "dri" || len(entries) > 1) {
-		klog.Errorf(">1 entries in '%s', or '%s' != 'dri' - real devfs?", path, entries[0].Name())
+		klog.Fatalf(">1 entries in '%s', or '%s' != 'dri' - real devfs?", path, entries[0].Name())
 	}
 
 	klog.Warningf("Removing already existing fake %s path '%s'", name, path)
 
 	if err = os.RemoveAll(path); err != nil {
-		klog.Errorf("Removing existing %s in '%s' failed: %v", name, path, err)
+		klog.Fatalf("Removing existing %s in '%s' failed: %v", name, path, err)
 	}
 }
 
@@ -356,27 +354,27 @@ func GenerateDriFiles(opts GenOptions) {
 		klog.V(1).Infof("Config: '%s'", opts.Info)
 	}
 
-	removeExistingDir(DevfsPath, "devfs")
-	removeExistingDir(SysfsPath, "sysfs")
+	removeExistingDir(devfsPath, "devfs")
+	removeExistingDir(sysfsPath, "sysfs")
 	klog.V(1).Infof("Generating fake DRI device(s) sysfs, debugfs and devfs content under '%s' & '%s'",
-		SysfsPath, DevfsPath)
+		sysfsPath, devfsPath)
 
 	opts.dirs, opts.files, opts.devs, opts.symls = 0, 0, 0, 0
 	for i := 0; i < opts.DevCount; i++ {
-		if err := addSysfsBusTree(SysfsPath, &opts, i); err != nil {
-			klog.Errorf("Dev-%d sysfs bus tree generation failed: %v", i, err)
+		if err := addSysfsBusTree(sysfsPath, &opts, i); err != nil {
+			klog.Fatalf("Dev-%d sysfs bus tree generation failed: %v", i, err)
 		}
 
-		if err := addSysfsDriTree(SysfsPath, &opts, i); err != nil {
-			klog.Errorf("Dev-%d sysfs tree generation failed: %v", i, err)
+		if err := addSysfsDriTree(sysfsPath, &opts, i); err != nil {
+			klog.Fatalf("Dev-%d sysfs tree generation failed: %v", i, err)
 		}
 
-		if err := addDevfsDriTree(DevfsPath, &opts, i); err != nil {
-			klog.Errorf("Dev-%d devfs tree generation failed: %v", i, err)
+		if err := addDevfsDriTree(devfsPath, &opts, i); err != nil {
+			klog.Fatalf("Dev-%d devfs tree generation failed: %v", i, err)
 		}
 
-		if err := addDebugfsDriTree(SysfsPath, &opts, i); err != nil {
-			klog.Errorf("Dev-%d debugfs tree generation failed: %v", i, err)
+		if err := addDebugfsDriTree(sysfsPath, &opts, i); err != nil {
+			klog.Fatalf("Dev-%d debugfs tree generation failed: %v", i, err)
 		}
 	}
 
@@ -391,7 +389,7 @@ func makeXelinkSideCar(opts GenOptions) {
 	tiles := opts.TilesPerDev
 	connections := opts.Capabilities["connections"]
 
-	if topology == FullyConnected {
+	if topology == fullyConnected {
 		saveSideCarFile(buildConnectionList(gpus, tiles))
 	} else if connections != "" {
 		saveSideCarFile(connections)
@@ -442,11 +440,11 @@ func saveSideCarFile(connections string) {
 	// Safely create file in the temp directory
 	f, err := os.Create(filePath)
 	if err != nil {
-		klog.Errorf("Failed to create file: %v", err)
+		klog.Fatalf("Failed to create file: %v", err)
 	}
 	defer f.Close()
 
-	line := fmt.Sprintf("xpumanager.intel.com/xe-links=%s", connections[:min(len(connections), MaxK8sLabelSize)])
+	line := fmt.Sprintf("xpumanager.intel.com/xe-links=%s", connections[:min(len(connections), maxK8sLabelSize)])
 	klog.V(1).Info(line)
 
 	if _, err := f.WriteString(line + "\n"); err != nil {
@@ -455,8 +453,8 @@ func saveSideCarFile(connections string) {
 
 	index := 2
 
-	for i := MaxK8sLabelSize; i < len(connections); i += (MaxK8sLabelSize - 1) {
-		line := fmt.Sprintf("xpumanager.intel.com/xe-links%d=Z%s", index, connections[i:min(len(connections), i+MaxK8sLabelSize-1)])
+	for i := maxK8sLabelSize; i < len(connections); i += (maxK8sLabelSize - 1) {
+		line := fmt.Sprintf("xpumanager.intel.com/xe-links%d=Z%s", index, connections[i:min(len(connections), i+maxK8sLabelSize-1)])
 		klog.V(1).Info(line)
 
 		if _, err := f.WriteString(line + "\n"); err != nil {
@@ -468,28 +466,28 @@ func saveSideCarFile(connections string) {
 }
 
 func MakeOptions(opts GenOptions) GenOptions {
-	if opts.DevCount < 1 || opts.DevCount > MaxDevs {
-		klog.Errorf("Invalid device count: 1 <= %d <= %d", opts.DevCount, MaxDevs)
+	if opts.DevCount < 1 || opts.DevCount > maxDevs {
+		klog.Fatalf("Invalid device count: 1 <= %d <= %d", opts.DevCount, maxDevs)
 	}
 
 	if opts.VfsPerPf > 0 {
 		if opts.TilesPerDev > 0 || opts.DevsPerNode > 0 {
-			klog.Errorf("SR-IOV VFs (%d) with device tiles (%d) or Numa nodes (%d) is unsupported for faking",
+			klog.Fatalf("SR-IOV VFs (%d) with device tiles (%d) or Numa nodes (%d) is unsupported for faking",
 				opts.VfsPerPf, opts.TilesPerDev, opts.DevsPerNode)
 		}
 
 		if opts.DevCount%(opts.VfsPerPf+1) != 0 {
-			klog.Errorf("%d devices cannot be evenly split to between set of 1 SR-IOV PF + %d VFs",
+			klog.Fatalf("%d devices cannot be evenly split to between set of 1 SR-IOV PF + %d VFs",
 				opts.DevCount, opts.VfsPerPf)
 		}
 	}
 
 	if opts.DevsPerNode > opts.DevCount {
-		klog.Errorf("DevsPerNode (%d) > DevCount (%d)", opts.DevsPerNode, opts.DevCount)
+		klog.Fatalf("DevsPerNode (%d) > DevCount (%d)", opts.DevsPerNode, opts.DevCount)
 	}
 
-	if opts.DevMemSize%Mib != 0 {
-		klog.Errorf("Invalid memory size (%f MiB), not even MiB", float64(opts.DevMemSize)/Mib)
+	if opts.DevMemSize%mib != 0 {
+		klog.Fatalf("Invalid memory size (%f mib), not even mib", float64(opts.DevMemSize)/mib)
 	}
 
 	return opts
@@ -497,21 +495,19 @@ func MakeOptions(opts GenOptions) GenOptions {
 
 func GetOptions(name string) GenOptions {
 	if name == "" {
-		klog.Errorf("No fake device spec provided")
+		klog.Fatalf("No fake device spec provided")
 	}
 
 	data, err := os.ReadFile(name)
 	if err != nil {
-		klog.Errorf("Reading JSON spec file '%s' failed: %v", name, err)
+		klog.Fatalf("Reading JSON spec file '%s' failed: %v", name, err)
 	}
 
-	if Verbose {
-		klog.V(1).Infof("Using fake device JSON spec: %v\n", string(data))
-	}
+	klog.V(1).Infof("Using fake device JSON spec: %v\n", string(data))
 
 	var opts GenOptions
 	if err = json.Unmarshal(data, &opts); err != nil {
-		klog.Errorf("Unmarshaling JSON spec file '%s' failed: %v", name, err)
+		klog.Fatalf("Unmarshaling JSON spec file '%s' failed: %v", name, err)
 	}
 
 	return MakeOptions(opts)
@@ -519,16 +515,14 @@ func GetOptions(name string) GenOptions {
 
 func GetOptionsBySpec(data string) GenOptions {
 	if data == "" {
-		klog.Errorf("No fake device spec provided")
+		klog.Fatalf("No fake device spec provided")
 	}
 
-	if Verbose {
-		klog.V(1).Infof("Using fake device YAML spec: %v\n", data)
-	}
+	klog.V(1).Infof("Using fake device YAML spec: %v\n", data)
 
 	var opts genOptionsWithTags
 	if err := yaml.Unmarshal([]byte(data), &opts); err != nil {
-		klog.Errorf("Unmarshaling YAML spec '%s' failed: %v", data, err)
+		klog.Fatalf("Unmarshaling YAML spec '%s' failed: %v", data, err)
 	}
 
 	return MakeOptions(convertToGenOptions(opts))
